@@ -449,18 +449,7 @@ def take_screenshots(config: dict):
         while p < max_pages:
             # スクリーンショット取得
             screenshot = pyautogui.screenshot(region=(x1, y1, width, height))
-
-            # 重複検出
-            if auto_stop:
-                current_hash = image_hash(screenshot)
-                if current_hash == prev_hash:
-                    same_count += 1
-                    if same_count >= threshold:
-                        print(f"\n  🛑 {threshold} 回連続で同じ画像を検出しました。自動停止します。")
-                        break
-                else:
-                    same_count = 0
-                prev_hash = current_hash
+            current_hash = image_hash(screenshot)
 
             # ファイル名
             ext = fmt if fmt in ("png", "jpg") else "png"
@@ -483,6 +472,7 @@ def take_screenshots(config: dict):
                 screenshot.save(out_path)
 
             captured_files.append(out_path)
+            prev_hash = current_hash
             p += 1
 
             # プログレス表示
@@ -494,8 +484,51 @@ def take_screenshots(config: dict):
             # ページ送り (press = keyDown + keyUp で1回押して離す)
             pyautogui.press(direction)
 
-            # 待機
-            time.sleep(span)
+            # ────────────────────────────────────────
+            # ページが実際に切り替わるまで待機する
+            # (固定待機ではなく画面変化を検出する方式)
+            # ────────────────────────────────────────
+            POLL_INTERVAL = 0.15       # 画面チェック間隔 (秒)
+            TIMEOUT = 5.0              # 最大待機時間 (秒)
+            STABLE_WAIT = span         # 変化後の安定待ち (設定のspan値)
+
+            elapsed = 0.0
+            page_changed = False
+
+            # フェーズ1: 画面が変わるまで待つ
+            while elapsed < TIMEOUT:
+                time.sleep(POLL_INTERVAL)
+                elapsed += POLL_INTERVAL
+                check = pyautogui.screenshot(region=(x1, y1, width, height))
+                check_hash = image_hash(check)
+                if check_hash != prev_hash:
+                    page_changed = True
+                    break
+
+            if page_changed:
+                # フェーズ2: 画面が安定するまで待つ
+                #   (アニメーション中の中間フレームを避ける)
+                stable_hash = None
+                while elapsed < TIMEOUT:
+                    time.sleep(POLL_INTERVAL)
+                    elapsed += POLL_INTERVAL
+                    check = pyautogui.screenshot(region=(x1, y1, width, height))
+                    new_hash = image_hash(check)
+                    if new_hash == stable_hash:
+                        # 2回連続で同じ = アニメーション完了
+                        break
+                    stable_hash = new_hash
+                # 安定後に少し待って確実にする
+                time.sleep(STABLE_WAIT)
+                # ページ変化成功 → same_countリセット
+                same_count = 0
+            else:
+                # タイムアウト: ページが変わらなかった (最終ページの可能性)
+                same_count += 1
+                if auto_stop and same_count >= threshold:
+                    print(f"\n  🛑 ページが {threshold} 回連続で変化しませんでした。最終ページと判断し停止します。")
+                    break
+                time.sleep(STABLE_WAIT)
 
     except KeyboardInterrupt:
         print("\n\n  ⚠️ ユーザーにより中断されました。")

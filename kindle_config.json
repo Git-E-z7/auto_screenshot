@@ -1,9 +1,9 @@
 {
   "page": 0,
-  "x1": 187,
-  "y1": 70,
-  "x2": 1723,
-  "y2": 909,
+  "x1": 123,
+  "y1": 0,
+  "x2": 1786,
+  "y2": 1079,
   "span": 0.8,
   "wait_before_start": 5,
   "output_folder_prefix": "output",
