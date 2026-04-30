@@ -23,6 +23,7 @@ import json
 import datetime
 import hashlib
 from pathlib import Path
+import tkinter as tk
 
 try:
     from PIL import Image
@@ -152,53 +153,163 @@ def image_hash(img) -> str:
 
 
 # ============================================================
-# 座標測定
+# 座標測定（Snipping Tool風 ドラッグ選択）
 # ============================================================
 
+def _run_region_selector() -> tuple:
+    """
+    Snipping Tool風のドラッグ選択オーバーレイを表示し、
+    ユーザーが選択した矩形の座標 (x1, y1, x2, y2) を返す。
+    キャンセル時は None を返す。
+    """
+    result = {"coords": None}
+
+    # --- スクリーンショットを撮影してオーバーレイの背景にする ---
+    screenshot = pyautogui.screenshot()
+
+    root = tk.Tk()
+    root.title("範囲選択")
+    root.attributes("-fullscreen", True)
+    root.attributes("-topmost", True)
+    root.configure(cursor="crosshair")
+
+    # スクリーンサイズ
+    sw = root.winfo_screenwidth()
+    sh = root.winfo_screenheight()
+
+    canvas = tk.Canvas(root, width=sw, height=sh,
+                       highlightthickness=0, cursor="crosshair")
+    canvas.pack(fill=tk.BOTH, expand=True)
+
+    # 背景画像（デスクトップのスクリーンショット）を表示
+    from PIL import ImageTk
+    bg_image = ImageTk.PhotoImage(screenshot)
+    canvas.create_image(0, 0, anchor=tk.NW, image=bg_image)
+
+    # 半透明の暗いオーバーレイ
+    overlay = canvas.create_rectangle(0, 0, sw, sh,
+                                      fill="black", stipple="gray50",
+                                      outline="")
+
+    # 選択矩形と座標表示
+    rect_id = None
+    start_x = start_y = 0
+    label_id = None
+    # 明るいくり抜き領域用のリスト
+    cutout_id = None
+
+    # --- ガイドテキスト ---
+    canvas.create_text(sw // 2, 40,
+                       text="📐 ドラッグでキャプチャ範囲を選択  |  Escでキャンセル",
+                       fill="white", font=("Yu Gothic UI", 16, "bold"))
+
+    def on_press(event):
+        nonlocal start_x, start_y, rect_id, label_id, cutout_id
+        start_x, start_y = event.x, event.y
+        # 選択矩形（赤い枠線）
+        if rect_id:
+            canvas.delete(rect_id)
+        rect_id = canvas.create_rectangle(
+            start_x, start_y, start_x, start_y,
+            outline="#FF4444", width=2, dash=(6, 3)
+        )
+        # くり抜き画像
+        if cutout_id:
+            canvas.delete(cutout_id)
+        # サイズ表示ラベル
+        if label_id:
+            canvas.delete(label_id)
+
+    def on_drag(event):
+        nonlocal label_id, cutout_id
+        cur_x, cur_y = event.x, event.y
+        canvas.coords(rect_id, start_x, start_y, cur_x, cur_y)
+
+        # サイズ表示を更新
+        w = abs(cur_x - start_x)
+        h = abs(cur_y - start_y)
+        if label_id:
+            canvas.delete(label_id)
+        label_id = canvas.create_text(
+            (start_x + cur_x) // 2, min(start_y, cur_y) - 15,
+            text=f"{w} × {h} px",
+            fill="white", font=("Yu Gothic UI", 12, "bold")
+        )
+
+        # くり抜き: 選択範囲を明るく見せる
+        if cutout_id:
+            canvas.delete(cutout_id)
+        lx = min(start_x, cur_x)
+        ly = min(start_y, cur_y)
+        rx = max(start_x, cur_x)
+        ry = max(start_y, cur_y)
+        # 選択範囲に元画像を切り抜いて重ねる
+        if rx - lx > 1 and ry - ly > 1:
+            cropped = screenshot.crop((lx, ly, rx, ry))
+            cutout_photo = ImageTk.PhotoImage(cropped)
+            cutout_id = canvas.create_image(lx, ly, anchor=tk.NW,
+                                            image=cutout_photo)
+            # 参照を保持（ガベージコレクション防止）
+            canvas._cutout_photo = cutout_photo
+            # 枠線を最前面に
+            canvas.tag_raise(rect_id)
+            if label_id:
+                canvas.tag_raise(label_id)
+
+    def on_release(event):
+        end_x, end_y = event.x, event.y
+        # 座標を正規化（左上・右下）
+        x1 = min(start_x, end_x)
+        y1 = min(start_y, end_y)
+        x2 = max(start_x, end_x)
+        y2 = max(start_y, end_y)
+        # 最小サイズチェック
+        if (x2 - x1) > 10 and (y2 - y1) > 10:
+            result["coords"] = (x1, y1, x2, y2)
+        root.destroy()
+
+    def on_escape(event):
+        root.destroy()
+
+    canvas.bind("<ButtonPress-1>", on_press)
+    canvas.bind("<B1-Motion>", on_drag)
+    canvas.bind("<ButtonRelease-1>", on_release)
+    root.bind("<Escape>", on_escape)
+
+    root.mainloop()
+    return result["coords"]
+
+
 def measure_coordinates(config: dict):
-    """マウスカーソル位置でキャプチャ座標を測定する"""
+    """Snipping Tool風のドラッグ選択でキャプチャ座標を測定する"""
     print()
-    print("  🖱️  キャプチャ座標の測定")
+    print("  🖱️  キャプチャ座標の測定（ドラッグ選択）")
     print("  ─────────────────────────────")
-    print("  Kindleアプリのウィンドウを開いた状態で行ってください。")
+    print("  画面全体が暗くなります。")
+    print("  マウスをドラッグしてキャプチャ範囲を選択してください。")
+    print("  Escキーでキャンセルできます。")
     print()
-    print("  まず【左上座標】を測定します。")
-    print("  キャプチャ範囲の左上にマウスカーソルを合わせてください。")
-    print("  3秒後に座標を取得します...")
-    print()
+    input("  Enter を押すと選択画面を開きます...")
 
-    for i in range(3, 0, -1):
-        print(f"    {i}...", end="\r")
-        time.sleep(1)
+    coords = _run_region_selector()
 
-    pos1 = pyautogui.position()
-    print(f"  ✅ 左上座標: ({pos1.x}, {pos1.y})         ")
-    print()
+    if coords is None:
+        print("  ⏭️ キャンセルされました。")
+        print()
+        return
 
-    time.sleep(0.5)
-
-    print("  次に【右下座標】を測定します。")
-    print("  キャプチャ範囲の右下にマウスカーソルを合わせてください。")
-    print("  3秒後に座標を取得します...")
-    print()
-
-    for i in range(3, 0, -1):
-        print(f"    {i}...", end="\r")
-        time.sleep(1)
-
-    pos2 = pyautogui.position()
-    print(f"  ✅ 右下座標: ({pos2.x}, {pos2.y})         ")
-    print()
-
-    print(f"  📐 キャプチャ範囲: {pos2.x - pos1.x} x {pos2.y - pos1.y} px")
+    x1, y1, x2, y2 = coords
+    print(f"  ✅ 左上座標: ({x1}, {y1})")
+    print(f"  ✅ 右下座標: ({x2}, {y2})")
+    print(f"  📐 キャプチャ範囲: {x2 - x1} x {y2 - y1} px")
     print()
 
     apply = input("  この座標を設定に反映しますか？ (y/n): ").strip().lower()
     if apply == "y":
-        config["x1"] = pos1.x
-        config["y1"] = pos1.y
-        config["x2"] = pos2.x
-        config["y2"] = pos2.y
+        config["x1"] = x1
+        config["y1"] = y1
+        config["x2"] = x2
+        config["y2"] = y2
         save_config(config)
         print("  ✅ 座標を設定に反映しました。")
     else:
