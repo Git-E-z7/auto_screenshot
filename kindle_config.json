@@ -1,0 +1,18 @@
+{
+  "page": 0,
+  "x1": 164,
+  "y1": 90,
+  "x2": 1721,
+  "y2": 964,
+  "span": 0.8,
+  "wait_before_start": 5,
+  "output_folder_prefix": "output",
+  "output_file_prefix": "page",
+  "image_format": "png",
+  "jpg_quality": 90,
+  "resize_width": 0,
+  "auto_stop": true,
+  "auto_stop_threshold": 3,
+  "generate_pdf": true,
+  "page_direction": "right"
+}
